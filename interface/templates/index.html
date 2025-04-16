@@ -1,0 +1,1302 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Formal Verification Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <style>
+        body { padding: 20px; }
+        .result-area { white-space: pre-wrap; font-family: monospace; max-height: 500px; overflow-y: auto; }
+        .successful { color: green; }
+        .failed { color: red; }
+        .unknown { color: orange; }
+        .nav-tabs .nav-link { cursor: pointer; }
+        
+        /* Diff styling */
+        .diff-line { font-family: monospace; white-space: pre; }
+        .diff-changed { background-color: #e6ffed; }
+        .diff-added { background-color: #e6ffed; }
+        .diff-removed { background-color: #ffebe9; text-decoration: line-through; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Formal Verification Assistant</h1>
+        
+        <!-- Add tabs navigation -->
+        <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="verify-tab" data-bs-toggle="tab" data-bs-target="#verify-tab-pane" type="button" role="tab" aria-controls="verify-tab-pane" aria-selected="true">Verification</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="ai-fix-tab" data-bs-toggle="tab" data-bs-target="#ai-fix-tab-pane" type="button" role="tab" aria-controls="ai-fix-tab-pane" aria-selected="false">AI Fix</button>
+            </li>
+        </ul>
+        
+        <!-- Tab content -->
+        <div class="tab-content" id="myTabContent">
+            <!-- Verification Tab -->
+            <div class="tab-pane fade show active" id="verify-tab-pane" role="tabpanel" aria-labelledby="verify-tab" tabindex="0">
+                <div class="card mb-4">
+                    <div class="card-header">Upload Files</div>
+                    <div class="card-body">
+                        <form id="upload-form" enctype="multipart/form-data">
+                            <div class="mb-3">
+                                <label for="files" class="form-label">Select C/H files:</label>
+                                <input type="file" class="form-control" id="files" name="files" multiple accept=".c,.h" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Upload Files</button>
+                        </form>
+                    </div>
+                </div>
+                
+                <div id="property-section" class="card mb-4" style="display: none;">
+                    <div class="card-header">Available Properties</div>
+                    <div class="card-body">
+                        <div id="properties-list" class="mb-3"></div>
+                        
+                        <!-- Add property content display -->
+                        <div id="property-content-display" style="display: none;">
+                            <h5>Selected Property:</h5>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <span id="selected-property-name" class="fw-bold"></span>
+                                <button id="close-property-content" class="btn btn-sm btn-outline-secondary">Close</button>
+                            </div>
+                            <div id="property-content" class="result-area border p-3 bg-light"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="command-section" class="card mb-4" style="display: none;">
+                    <div class="card-header">ESBMC Command</div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="memlimit-input" class="form-label">Memory Limit (MB):</label>
+                                <input type="number" class="form-control" id="memlimit-input" value="10000" min="1000">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="timeout-input" class="form-label">Timeout (seconds):</label>
+                                <input type="number" class="form-control" id="timeout-input" value="300" min="10">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="command-input" class="form-label">Additional Command Options:</label>
+                            <input type="text" class="form-control" id="command-input" value="--k-induction">
+                            <small class="form-text text-muted">
+                                For property verification, add -DVERIFY_PROPERTY_X where X is the property identifier.<br>
+                                Note: Only .c files will be processed directly. Header files (.h) will be included via the -I flag automatically.<br>
+                                <strong>Tip:</strong> Click on a property above to automatically add it to the command.
+                            </small>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <button id="verify-btn" class="btn btn-success">Run Verification</button>
+                            <button id="switch-to-ai-fix" class="btn btn-primary" style="display: none;">Get AI Fix Suggestions</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="verification-result-section" class="card mb-4" style="display: none;">
+                    <div class="card-header">Verification Results</div>
+                    <div class="card-body">
+                        <!-- Add property content display above status -->
+                        <div id="verified-property-section" style="display: none;" class="mb-3">
+                            <h5>Selected Property:</h5>
+                            <div id="verified-property-content" class="result-area border p-3 bg-light mb-3"></div>
+                        </div>
+                        
+                        <div id="verification-status" class="alert"></div>
+                        
+                        <h5>Command Used:</h5>
+                        <div id="command-used" class="result-area border p-3 bg-light mb-3"></div>
+                        
+                        <h5>Output:</h5>
+                        <div id="verification-output" class="result-area border p-3 bg-light"></div>
+                        
+                        <div id="counterexample-section" style="display: none;">
+                            <h5>Counterexample:</h5>
+                            <div id="counterexample-output" class="result-area border p-3 bg-light"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- AI Fix Tab -->
+            <div class="tab-pane fade" id="ai-fix-tab-pane" role="tabpanel" aria-labelledby="ai-fix-tab" tabindex="0">
+                <div id="ai-fix-content">
+                    <div class="card mb-4">
+                        <div class="card-header">Verification Results</div>
+                        <div class="card-body">
+                            <!-- This is where the property section will be inserted dynamically -->
+                            <div id="ai-verification-status" class="alert mb-3">Loading verification results...</div>
+                            <h5>Command Used:</h5>
+                            <div id="ai-command-used" class="result-area border p-3 bg-light mb-3">Loading...</div>
+                            
+                            <div id="ai-counterexample-section" class="mt-4">
+                                <h5>Counterexample:</h5>
+                                <div id="ai-counterexample-output" class="result-area border p-3 bg-light">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card mb-4">
+                        <div class="card-header">Source Files</div>
+                        <div class="card-body">
+                            <div id="ai-source-files-list" class="mb-3">Loading source files...</div>
+                            <h5>Selected Files:</h5>
+                            <ul id="selected-files" class="list-group mb-3">
+                                <li class="list-group-item text-muted">No files selected</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="card mb-4">
+                        <div class="card-header">AI Fix Suggestions</div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label for="ai-model" class="form-label">Select AI Model:</label>
+                                <select id="ai-model" class="form-select">
+                                    <option value="chatgpt">OpenAI</option>
+                                    <option value="claude">Anthropic Claude</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="specific-model" class="form-label">Specific Model:</label>
+                                <select id="specific-model" class="form-select">
+                                    <option value="">Loading models...</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="api-key" class="form-label">API Key:</label>
+                                <input type="text" id="api-key" class="form-control" placeholder="Enter your API key">
+                            </div>
+                            
+                            <!-- Add prompt template editor -->
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <label for="prompt-template" class="form-label">AI Prompt Template:</label>
+                                    <button id="toggle-prompt-editor" class="btn btn-sm btn-outline-secondary">Show/Hide</button>
+                                </div>
+                                <div id="prompt-editor-container" style="display: none;">
+                                    <textarea id="prompt-template" class="form-control mb-2" rows="10"></textarea>
+                                    <div class="d-flex justify-content-between">
+                                        <button id="reset-prompt-template" class="btn btn-sm btn-outline-warning">Reset to Default</button>
+                                        <button id="save-prompt-template" class="btn btn-sm btn-outline-primary">Save Template</button>
+                                    </div>
+                                    <div class="form-text">
+                                        <p>Available placeholders:</p>
+                                        <ul>
+                                            <li><code>{property_section}</code> - The content of the property being verified</li>
+                                            <li><code>{status}</code> - Verification status (SUCCESSFUL, FAILED, etc.)</li>
+                                            <li><code>{command_used}</code> - The ESBMC command that was executed</li>
+                                            <li><code>{output_section}</code> - Verification output or counterexample</li>
+                                            <li><code>{source_files_section}</code> - Source code of selected files</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="use-custom-prompt">
+                                    <label class="form-check-label" for="use-custom-prompt">
+                                        Use custom prompt for this request
+                                    </label>
+                                </div>
+                                <div id="custom-prompt-container" style="display: none;">
+                                    <textarea id="custom-prompt" class="form-control mt-2" rows="6" placeholder="Enter your custom prompt here..."></textarea>
+                                </div>
+                            </div>
+                            
+                            <div id="error-message" class="alert alert-danger" style="display: none;"></div>
+                            <button id="analyze-fix-btn" class="btn btn-primary">Analyze and Fix</button>
+                            
+                            <!-- New section to display selected file -->
+                            <div id="selected-file-info" class="mt-3">
+                                <strong>Selected File for Fix:</strong>
+                                <span id="selected-file-name" class="text-muted">No file selected</span>
+                            </div>
+
+                            <!-- New section for additional information -->
+                            <div class="mb-3 mt-3">
+                                <label for="system-specification" class="form-label">System Specification (optional):</label>
+                                <textarea id="system-specification" class="form-control" rows="3" placeholder="Enter any additional information here..."></textarea>
+                            </div>
+
+                            <div id="loading-spinner" class="mt-3" style="display: none;">
+                                <div class="d-flex align-items-center">
+                                    <strong>Generating suggestions...</strong>
+                                    <div class="spinner-border ms-auto" role="status" aria-hidden="true"></div>
+                                </div>
+                            </div>
+                            <div id="ai-response-section" class="mt-4" style="display: none;">
+                                <h5>AI Suggestions (editable):</h5>
+                                <div id="ai-response" class="result-area border p-3 bg-light" contenteditable="true"></div>
+                                <div class="mt-3">
+                                    <button id="apply-fix-btn" class="btn btn-success">Generate Fixed Code</button>
+                                </div>
+                            </div>
+                            
+                            <!-- Add section to display the prompt that was used -->
+                            <div id="prompt-used-section" class="mt-4" style="display: none;">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h5>Prompt Used:</h5>
+                                    <button id="toggle-prompt-used" class="btn btn-sm btn-outline-secondary">Show/Hide</button>
+                                </div>
+                                <div id="prompt-used-container" style="display: none;">
+                                    <div id="prompt-used" class="result-area border p-3 bg-light mt-2" style="max-height: 300px; overflow-y: auto;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="fixed-code-section" class="card mb-4" style="display: none;">
+                        <div class="card-header">Fixed Code</div>
+                        <div class="card-body">
+                            <ul class="nav nav-tabs" id="codeTab" role="tablist">
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link active" id="code-tab" data-bs-toggle="tab" data-bs-target="#code-tab-pane" type="button" role="tab" aria-controls="code-tab-pane" aria-selected="true">Code</button>
+                                </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link" id="diff-tab" data-bs-toggle="tab" data-bs-target="#diff-tab-pane" type="button" role="tab" aria-controls="diff-tab-pane" aria-selected="false">Diff</button>
+                                </li>
+                            </ul>
+                            <div class="tab-content" id="codeTabContent">
+                                <div class="tab-pane fade show active" id="code-tab-pane" role="tabpanel" aria-labelledby="code-tab" tabindex="0">
+                                    <div id="fixed-code" class="result-area border p-3 bg-light mt-3" style="max-height: 500px; overflow-y: auto;"></div>
+                                </div>
+                                <div class="tab-pane fade" id="diff-tab-pane" role="tabpanel" aria-labelledby="diff-tab" tabindex="0">
+                                    <div id="diff-view" class="result-area border p-3 bg-light mt-3" style="max-height: 500px; overflow-y: auto;"></div>
+                                </div>
+                            </div>
+                            <div class="mt-3 d-flex justify-content-between">
+                                <button id="save-fixed-code-btn" class="btn btn-primary">Save Fixed Code</button>
+                                <button id="verify-fixed-code-btn" class="btn btn-success">Verify Fixed Code</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Add a new section for fixed code verification results -->
+                    <div id="fixed-verification-result-section" class="card mb-4" style="display: none;">
+                        <div class="card-header">Verification Results for Fixed Code</div>
+                        <div class="card-body">
+                            <div id="fixed-verification-status" class="alert mb-3"></div>
+                            <h5>Command Used:</h5>
+                            <div id="fixed-command-used" class="result-area border p-3 bg-light mb-3"></div>
+                            <h5>ESBMC Verification Process:</h5>
+                            <div id="fixed-result-output" class="result-area border p-3 bg-light"></div>
+                            
+                            <div id="fixed-counterexample-section" class="mt-4" style="display: none;">
+                                <h5>Counterexample:</h5>
+                                <div id="fixed-counterexample-output" class="result-area border p-3 bg-light"></div>
+                            </div>
+                            
+                            <!-- Add a button to continue iterative fixing if verification still fails -->
+                            <div id="continue-fixing-section" class="mt-3" style="display: none;">
+                                <button id="continue-fixing-btn" class="btn btn-warning">Continue Fixing</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add Bootstrap JS for tab functionality -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Store property contents received from server
+            let propertyContents = {};
+            // Track the currently selected property
+            let selectedProperty = "";
+            
+            document.getElementById('upload-form').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(this);
+                
+                try {
+                    const response = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.files && data.files.length) {
+                        alert(`Uploaded ${data.files.length} files successfully`);
+                    }
+                    
+                    // Store property contents
+                    if (data.property_contents) {
+                        propertyContents = data.property_contents;
+                    }
+                    
+                    if (data.properties && data.properties.length) {
+                        const propertiesList = document.getElementById('properties-list');
+                        propertiesList.innerHTML = '<h5>Found Properties:</h5>';
+                        
+                        const badgesContainer = document.createElement('div');
+                        badgesContainer.className = 'mb-3';
+                        
+                        data.properties.forEach(prop => {
+                            const propertyName = `VERIFY_PROPERTY_${prop}`;
+                            const badge = document.createElement('span');
+                            badge.className = 'badge bg-info property-badge me-2 mb-2';
+                            badge.style.cursor = 'pointer';
+                            badge.setAttribute('data-property', propertyName);
+                            badge.textContent = propertyName;
+                            
+                            // Add click event directly to each badge
+                            badge.addEventListener('click', function() {
+                                selectedProperty = propertyName;
+                                
+                                // Add to command if not already included
+                                const commandInput = document.getElementById('command-input');
+                                if (!commandInput.value.includes(`-D${propertyName}`)) {
+                                    commandInput.value += ` -D${propertyName}`;
+                                    commandInput.value = commandInput.value.trim();
+                                }
+                                
+                                // Display property content
+                                displayPropertyContent(propertyName);
+                            });
+                            
+                            badgesContainer.appendChild(badge);
+                        });
+                        
+                        propertiesList.appendChild(badgesContainer);
+                        document.getElementById('property-section').style.display = 'block';
+                    } else {
+                        const propertiesList = document.getElementById('properties-list');
+                        propertiesList.innerHTML = '<div class="alert alert-info">No verification properties found in the uploaded files</div>';
+                        document.getElementById('property-section').style.display = 'block';
+                    }
+                    
+                    // Show command section
+                    document.getElementById('command-section').style.display = 'block';
+                    
+                } catch (error) {
+                    alert('Error uploading files: ' + error.message);
+                }
+            });
+            
+            document.getElementById('verify-btn').addEventListener('click', async function() {
+                const customCommand = document.getElementById('command-input').value.trim();
+                const memLimit = document.getElementById('memlimit-input').value.trim();
+                const timeoutVal = document.getElementById('timeout-input').value.trim();
+                
+                document.getElementById('verify-btn').disabled = true;
+                document.getElementById('verify-btn').textContent = 'Verifying...';
+                
+                try {
+                    const response = await fetch('/verify', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ 
+                            command: customCommand,
+                            memlimit: memLimit,
+                            timeout: timeoutVal
+                        }),
+                    });
+                    
+                    const data = await response.json();
+                    console.log("Verification response:", data); // Debug log
+                    
+                    const statusDiv = document.getElementById('verification-status');
+                    const outputDiv = document.getElementById('verification-output');
+                    const commandUsedDiv = document.getElementById('command-used');
+                    const counterexampleDiv = document.getElementById('counterexample-output');
+                    const counterexampleSection = document.getElementById('counterexample-section');
+                    
+                    // Update verification status
+                    if (data.status === 'SUCCESSFUL') {
+                        statusDiv.className = 'alert alert-success';
+                        statusDiv.textContent = 'Verification Successful!';
+                        document.getElementById('switch-to-ai-fix').style.display = 'none';
+                    } else if (data.status === 'FAILED') {
+                        statusDiv.className = 'alert alert-danger';
+                        statusDiv.textContent = 'Verification Failed!';
+                        document.getElementById('switch-to-ai-fix').style.display = 'block';
+                    } else if (data.status === 'TIMEOUT') {
+                        statusDiv.className = 'alert alert-warning';
+                        statusDiv.textContent = `Verification Timeout: ${data.message || 'The verification process timed out.'}`;
+                        document.getElementById('switch-to-ai-fix').style.display = 'none';
+                    } else if (data.status === 'ERROR') {
+                        statusDiv.className = 'alert alert-danger';
+                        statusDiv.textContent = `Verification Error: ${data.message || 'An error occurred during verification.'}`;
+                        document.getElementById('switch-to-ai-fix').style.display = 'none';
+                    } else {
+                        statusDiv.className = 'alert alert-secondary';
+                        statusDiv.textContent = `Verification Status: ${data.status || 'Unknown'}`;
+                        document.getElementById('switch-to-ai-fix').style.display = 'none';
+                    }
+                    
+                    // Update command used
+                    commandUsedDiv.textContent = data.command_used || 'Command not available';
+                    
+                    // Update output
+                    if (data.output) {
+                        outputDiv.textContent = data.output;
+                    } else if (data.message) {
+                        outputDiv.textContent = data.message;
+                    } else {
+                        outputDiv.textContent = 'No output available';
+                    }
+                    
+                    // Handle counterexample
+                    if (data.counterexample) {
+                        counterexampleSection.style.display = 'block';
+                        counterexampleDiv.textContent = data.counterexample;
+                    } else {
+                        counterexampleSection.style.display = 'none';
+                    }
+                    
+                    // Show verification result section
+                    document.getElementById('verification-result-section').style.display = 'block';
+                    
+                    // If property is selected, show it in the verification results
+                    if (selectedProperty) {
+                        const propertyContent = propertyContents[selectedProperty];
+                        if (propertyContent) {
+                            document.getElementById('verified-property-content').textContent = propertyContent.content;
+                            document.getElementById('verified-property-section').style.display = 'block';
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Error during verification:', error);
+                    alert('Error during verification: ' + error.message);
+                } finally {
+                    document.getElementById('verify-btn').disabled = false;
+                    document.getElementById('verify-btn').textContent = 'Run Verification';
+                }
+            });
+            
+            // Switch to AI Fix tab when button is clicked
+            document.getElementById('switch-to-ai-fix').addEventListener('click', function() {
+                // Switch to AI Fix tab
+                const aiFixTab = new bootstrap.Tab(document.getElementById('ai-fix-tab'));
+                aiFixTab.show();
+                
+                // Load verification results
+                loadVerificationResults();
+                
+                // Load source files
+                loadSourceFilesForAI();
+            });
+            
+            // Function to load verification results for AI Fix tab
+            async function loadVerificationResults() {
+                try {
+                    const response = await fetch('/get_last_verification_result');
+                    const data = await response.json();
+                    
+                    console.log("Last verification result:", data); // Add this for debugging
+                    
+                    if (data.error) {
+                        document.getElementById('ai-verification-status').className = 'alert alert-danger';
+                        document.getElementById('ai-verification-status').textContent = data.error;
+                        return;
+                    }
+                    
+                    const verificationResults = data.verification_results;
+                    const propertyContent = data.property_content;
+                    
+                    // Update verification status
+                    const statusDiv = document.getElementById('ai-verification-status');
+                    if (verificationResults.status === 'SUCCESSFUL') {
+                        statusDiv.className = 'alert alert-success';
+                        statusDiv.textContent = 'Verification Successful!';
+                    } else if (verificationResults.status === 'FAILED') {
+                        statusDiv.className = 'alert alert-danger';
+                        statusDiv.textContent = 'Verification Failed!';
+                    } else if (verificationResults.status === 'TIMEOUT') {
+                        statusDiv.className = 'alert alert-warning';
+                        statusDiv.textContent = `Verification Timeout: ${verificationResults.message || 'The verification process timed out.'}`;
+                    } else if (verificationResults.status === 'ERROR') {
+                        statusDiv.className = 'alert alert-danger';
+                        statusDiv.textContent = `Verification Error: ${verificationResults.message || 'An error occurred during verification.'}`;
+                    } else {
+                        statusDiv.className = 'alert alert-secondary';
+                        statusDiv.textContent = `Verification Status: ${verificationResults.status || 'Unknown'}`;
+                    }
+                    
+                    // Update command used
+                    document.getElementById('ai-command-used').textContent = verificationResults.command_used || 'No command information available';
+                    
+                    // Update counterexample/output
+                    const counterexampleSection = document.getElementById('ai-counterexample-section');
+                    const counterexampleOutput = document.getElementById('ai-counterexample-output');
+                    
+                    if (verificationResults.counterexample) {
+                        counterexampleOutput.textContent = verificationResults.counterexample;
+                        counterexampleSection.style.display = 'block';
+                    } else if (verificationResults.output) {
+                        counterexampleOutput.textContent = verificationResults.output;
+                        counterexampleSection.style.display = 'block';
+                    } else {
+                        counterexampleOutput.textContent = 'No output or counterexample available';
+                        counterexampleSection.style.display = 'block';
+                    }
+                    
+                    // Add property content display if available
+                    if (propertyContent) {
+                        // Create property section if it doesn't exist
+                        let propertySection = document.getElementById('ai-property-section');
+                        if (!propertySection) {
+                            propertySection = document.createElement('div');
+                            propertySection.id = 'ai-property-section';
+                            propertySection.className = 'mb-3';
+                            
+                            const heading = document.createElement('h5');
+                            heading.textContent = 'Property Being Verified:';
+                            
+                            const contentDiv = document.createElement('div');
+                            contentDiv.id = 'ai-property-content';
+                            contentDiv.className = 'result-area border p-3 bg-light mb-3';
+                            
+                            propertySection.appendChild(heading);
+                            propertySection.appendChild(contentDiv);
+                            
+                            // Insert before verification status
+                            const verificationStatusDiv = document.getElementById('ai-verification-status');
+                            verificationStatusDiv.parentNode.insertBefore(propertySection, verificationStatusDiv);
+                        }
+                        
+                        document.getElementById('ai-property-content').textContent = propertyContent;
+                    }
+                    
+                } catch (error) {
+                    console.error('Error loading verification results:', error);
+                    document.getElementById('ai-verification-status').className = 'alert alert-danger';
+                    document.getElementById('ai-verification-status').textContent = 'Error loading verification results: ' + error.message;
+                }
+            }
+            
+            // Load source files for AI Fix tab
+            async function loadSourceFilesForAI() {
+                try {
+                    const response = await fetch('/get_source_files');
+                    const data = await response.json();
+                    
+                    const filesList = document.getElementById('ai-source-files-list');
+                    filesList.innerHTML = '<h5>Available Source Files:</h5>';
+                    
+                    if (data.files && data.files.length) {
+                        const fileButtonsContainer = document.createElement('div');
+                        fileButtonsContainer.className = 'list-group';
+                        
+                        data.files.forEach(file => {
+                            const button = document.createElement('button');
+                            button.className = 'list-group-item list-group-item-action';
+                            button.textContent = file;
+                            button.onclick = () => selectFileForAnalysis(file);
+                            fileButtonsContainer.appendChild(button);
+                        });
+                        
+                        filesList.appendChild(fileButtonsContainer);
+                    } else {
+                        filesList.innerHTML += '<div class="alert alert-info">No source files available</div>';
+                    }
+                } catch (error) {
+                    console.error('Error loading source files:', error);
+                    document.getElementById('ai-source-files-list').innerHTML = 
+                        '<div class="alert alert-danger">Error loading source files: ' + error.message + '</div>';
+                }
+            }
+            
+            // Selected files for AI analysis
+            const selectedFilesForAI = new Set();
+            
+            // Select file for AI analysis
+            function selectFileForAnalysis(filename) {
+                if (selectedFilesForAI.has(filename)) {
+                    selectedFilesForAI.delete(filename);
+                } else {
+                    selectedFilesForAI.add(filename);
+                }
+                
+                // Update selected files list
+                updateSelectedFilesList();
+                
+                // Update file button styles
+                const fileButtons = document.querySelectorAll('#ai-source-files-list .list-group-item');
+                fileButtons.forEach(button => {
+                    if (selectedFilesForAI.has(button.textContent)) {
+                        button.classList.add('active');
+                    } else {
+                        button.classList.remove('active');
+                    }
+                });
+
+                // 更新显示的选择文件名
+                const selectedFileNameElement = document.getElementById('selected-file-name');
+                if (selectedFilesForAI.size > 0) {
+                    selectedFileNameElement.textContent = Array.from(selectedFilesForAI)[0]; // 显示第一个选择的文件
+                } else {
+                    selectedFileNameElement.textContent = 'No file selected';
+                }
+            }
+            
+            // Update selected files list
+            function updateSelectedFilesList() {
+                const selectedFilesList = document.getElementById('selected-files');
+                selectedFilesList.innerHTML = '';
+                
+                if (selectedFilesForAI.size === 0) {
+                    const li = document.createElement('li');
+                    li.className = 'list-group-item text-muted';
+                    li.textContent = 'No files selected';
+                    selectedFilesList.appendChild(li);
+                } else {
+                    selectedFilesForAI.forEach(file => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                        li.textContent = file;
+                        
+                        const removeBtn = document.createElement('button');
+                        removeBtn.className = 'btn btn-sm btn-danger';
+                        removeBtn.textContent = 'Remove';
+                        removeBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            selectFileForAnalysis(file);
+                        };
+                        
+                        li.appendChild(removeBtn);
+                        selectedFilesList.appendChild(li);
+                    });
+                }
+            }
+            
+            // Extract property ID from verification command
+            function extractPropertyId(commandUsed) {
+                const propertyMatch = commandUsed.match(/-DVERIFY_PROPERTY_(\d+)/);
+                if (propertyMatch && propertyMatch[1]) {
+                    return propertyMatch[1];
+                }
+                return "1"; // Default to 1 if not found
+            }
+            
+            // Load the default prompt template when the page loads
+            async function loadDefaultPromptTemplate() {
+                try {
+                    const response = await fetch('/get_default_prompt_template');
+                    const data = await response.json();
+                    
+                    if (data.template) {
+                        document.getElementById('prompt-template').value = data.template;
+                    }
+                } catch (error) {
+                    console.error('Error loading default prompt template:', error);
+                }
+            }
+
+            // Toggle the prompt editor visibility
+            document.getElementById('toggle-prompt-editor').addEventListener('click', function() {
+                const promptEditorContainer = document.getElementById('prompt-editor-container');
+                if (promptEditorContainer.style.display === 'none') {
+                    promptEditorContainer.style.display = 'block';
+                } else {
+                    promptEditorContainer.style.display = 'none';
+                }
+            });
+
+            // Toggle the used prompt visibility
+            document.getElementById('toggle-prompt-used').addEventListener('click', function() {
+                const promptUsedContainer = document.getElementById('prompt-used-container');
+                if (promptUsedContainer.style.display === 'none') {
+                    promptUsedContainer.style.display = 'block';
+                } else {
+                    promptUsedContainer.style.display = 'none';
+                }
+            });
+
+            // Reset the prompt template to default
+            document.getElementById('reset-prompt-template').addEventListener('click', function() {
+                loadDefaultPromptTemplate();
+            });
+
+            // Save the prompt template
+            document.getElementById('save-prompt-template').addEventListener('click', async function() {
+                const template = document.getElementById('prompt-template').value;
+                
+                if (!template) {
+                    alert('Prompt template cannot be empty');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/update_prompt_template', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ template: template }),
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.status === 'SUCCESS') {
+                        alert('Prompt template updated successfully');
+                    } else {
+                        alert(`Error updating prompt template: ${data.message}`);
+                    }
+                } catch (error) {
+                    console.error('Error saving prompt template:', error);
+                    alert('Error saving prompt template: ' + error.message);
+                }
+            });
+
+            // Toggle custom prompt textarea
+            document.getElementById('use-custom-prompt').addEventListener('change', function() {
+                const customPromptContainer = document.getElementById('custom-prompt-container');
+                if (this.checked) {
+                    customPromptContainer.style.display = 'block';
+                } else {
+                    customPromptContainer.style.display = 'none';
+                }
+            });
+
+            // Define available models for each provider
+            const modelOptions = {
+                'chatgpt': [
+                    { value: 'gpt-4o', label: 'GPT-4o' },
+                    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+                    { value: 'gpt-4.1', label: 'GPT-4.1' },
+                    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+                    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+                    { value: 'o1', label: 'o1' },
+                    { value: 'o1-mini', label: 'o1 Mini' }
+                ],
+                'claude': [
+                    { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet' },
+                    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
+                    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+                    { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet' },
+                    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
+                ],
+                'deepseek': [
+                    { value: 'deepseek-chat', label: 'DeepSeek Chat' },
+                    { value: 'deepseek-coder', label: 'DeepSeek Coder' },
+                    { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' }
+                ]
+            };
+            
+            // Update specific model options when AI model changes
+            const aiModelSelect = document.getElementById('ai-model');
+            const specificModelSelect = document.getElementById('specific-model');
+            
+            function updateSpecificModels() {
+                const selectedProvider = aiModelSelect.value;
+                const models = modelOptions[selectedProvider] || [];
+                
+                specificModelSelect.innerHTML = '';
+                models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.value;
+                    option.textContent = model.label;
+                    specificModelSelect.appendChild(option);
+                });
+                
+                // Select the first option by default
+                if (models.length > 0) {
+                    specificModelSelect.value = models[0].value;
+                }
+            }
+            
+            // Initialize specific models
+            updateSpecificModels();
+            
+            // Update when AI model changes
+            aiModelSelect.addEventListener('change', updateSpecificModels);
+            
+            // Update the analyze-fix-btn click handler
+            document.getElementById('analyze-fix-btn').addEventListener('click', async function() {
+                const aiModel = document.getElementById('ai-model').value;
+                const specificModel = document.getElementById('specific-model').value;
+                const apiKey = document.getElementById('api-key').value;
+                const useCustomPrompt = document.getElementById('use-custom-prompt').checked;
+                const customPrompt = useCustomPrompt ? document.getElementById('custom-prompt').value : '';
+                const systemSpecification = document.getElementById('system-specification').value;
+                
+                if (!apiKey) {
+                    document.getElementById('error-message').textContent = 'API key is required';
+                    document.getElementById('error-message').style.display = 'block';
+                    return;
+                }
+                
+                if (selectedFilesForAI.size === 0) {
+                    document.getElementById('error-message').textContent = 'Please select at least one file for analysis';
+                    document.getElementById('error-message').style.display = 'block';
+                    return;
+                }
+                
+                // Hide error message if it was shown before
+                document.getElementById('error-message').style.display = 'none';
+                
+                // Show loading spinner and status
+                document.getElementById('loading-spinner').style.display = 'block';
+                document.getElementById('analyze-fix-btn').disabled = true;
+                
+                // Create a status element to show progress
+                const statusElement = document.createElement('div');
+                statusElement.className = 'alert alert-info';
+                statusElement.textContent = 'Starting analysis...';
+                document.getElementById('loading-spinner').appendChild(statusElement);
+                
+                // Clear previous response
+                document.getElementById('ai-response').innerHTML = '';
+                document.getElementById('ai-response-section').style.display = 'block';
+                document.getElementById('prompt-used-section').style.display = 'none';
+                
+                try {
+                    const response = await fetch('/analyze_and_fix', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            ai_model: aiModel,
+                            specific_model: specificModel,
+                            api_key: apiKey,
+                            selected_files: Array.from(selectedFilesForAI),
+                            custom_prompt: customPrompt,
+                            system_specification: systemSpecification
+                        }),
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    // Handle streaming response
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let currentResponse = '';
+                    
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        
+                        const text = decoder.decode(value);
+                        const lines = text.split('\n').filter(line => line.trim());
+                        
+                        for (const line of lines) {
+                            try {
+                                const data = JSON.parse(line);
+                                
+                                if (data.status === 'error') {
+                                    throw new Error(data.message);
+                                }
+                                
+                                // Update status message
+                                if (data.message) {
+                                    statusElement.textContent = data.message;
+                                }
+                                
+                                // If we're generating, update the response in real-time
+                                if (data.status === 'generating') {
+                                    if (data.current_response) {
+                                        currentResponse = data.current_response;
+                                        document.getElementById('ai-response').innerHTML = marked.parse(currentResponse);
+                                    } else if (data.token) {
+                                        currentResponse += data.token;
+                                        document.getElementById('ai-response').innerHTML = marked.parse(currentResponse);
+                                    }
+                                }
+                                
+                                // If we have a complete response, display it
+                                if (data.status === 'completed' && data.response) {
+                                    // Display the AI response
+                                    document.getElementById('ai-response').innerHTML = marked.parse(data.response);
+                                    
+                                    // Display the prompt used
+                                    document.getElementById('prompt-used-content').textContent = data.prompt_used;
+                                    document.getElementById('prompt-used-section').style.display = 'block';
+                                    document.getElementById('prompt-used-container').style.display = 'none';
+                                    
+                                    // Update status
+                                    statusElement.className = 'alert alert-success';
+                                    statusElement.textContent = 'Analysis completed!';
+                                }
+                            } catch (e) {
+                                console.error('Error parsing streaming response:', e, line);
+                            }
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error('Error during AI analysis:', error);
+                    document.getElementById('error-message').textContent = 'Error during AI analysis: ' + error.message;
+                    document.getElementById('error-message').style.display = 'block';
+                    
+                    // Update status
+                    statusElement.className = 'alert alert-danger';
+                    statusElement.textContent = 'Error: ' + error.message;
+                } finally {
+                    // Hide loading spinner but keep the status
+                    document.getElementById('loading-spinner').style.display = 'none';
+                    document.getElementById('analyze-fix-btn').disabled = false;
+                }
+            });
+            
+            // Apply selected fixes - updated to generate fixed code
+            document.getElementById('apply-fix-btn').addEventListener('click', async function() {
+                // Get the selected file (first file in the selectedFilesForAI set)
+                if (selectedFilesForAI.size === 0) {
+                    alert('Please select a file to apply fixes to.');
+                    return;
+                }
+                
+                const filename = Array.from(selectedFilesForAI)[0];
+                const aiSuggestions = document.getElementById('ai-response').innerHTML;
+                const userEdits = document.getElementById('ai-response').textContent;
+                const systemSpecification = document.getElementById('system-specification').value; // 获取系统规范
+                const aiModel = document.getElementById('ai-model').value;
+                const apiKey = document.getElementById('api-key').value;
+                
+                if (!aiSuggestions) {
+                    alert('No fix suggestions available.');
+                    return;
+                }
+                
+                // Get the original content of the file
+                try {
+                    const contentResponse = await fetch(`/get_source_content?filename=${encodeURIComponent(filename)}`);
+                    const contentData = await contentResponse.json();
+                    
+                    if (contentData.error) {
+                        alert(`Error getting file content: ${contentData.error}`);
+                        return;
+                    }
+                    
+                    let originalContent = contentData.content;
+                    
+                    // Show loading spinner
+                    document.getElementById('loading-spinner').style.display = 'block';
+                    
+                    // Generate fixed code
+                    const fixResponse = await fetch('/generate_fixed_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            filename: filename,
+                            original_content: originalContent,
+                            ai_suggestions: aiSuggestions,
+                            user_edits: userEdits,
+                            system_specification: systemSpecification, // 传递系统规范
+                            ai_model: aiModel,
+                            api_key: apiKey
+                        }),
+                    });
+                    
+                    const fixData = await fixResponse.json();
+                    
+                    if (fixData.error) {
+                        alert(`Error generating fixed code: ${fixData.error}`);
+                        return;
+                    }
+                    
+                    // Display the fixed code
+                    document.getElementById('fixed-code').textContent = fixData.fixed_code;
+                    
+                    // Generate diff view
+                    const diffResponse = await fetch('/compare_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            original_code: originalContent,
+                            fixed_code: fixData.fixed_code
+                        }),
+                    });
+                    
+                    const diffData = await diffResponse.json();
+                    
+                    if (diffData.error) {
+                        document.getElementById('diff-view').textContent = `Error generating diff: ${diffData.error}`;
+                    } else {
+                        // Use the HTML-formatted diff if available, otherwise use the plain text diff
+                        if (diffData.diff_html) {
+                            document.getElementById('diff-view').innerHTML = diffData.diff_html;
+                        } else {
+                            document.getElementById('diff-view').textContent = diffData.diff || 'No differences found';
+                        }
+                    }
+                    
+                    // Show the fixed code section
+                    document.getElementById('fixed-code-section').style.display = 'block';
+                    
+                } catch (error) {
+                    console.error('Error applying fix:', error);
+                    alert('Error applying fix: ' + error.message);
+                } finally {
+                    document.getElementById('loading-spinner').style.display = 'none';
+                }
+            });
+            
+            // Save fixed code
+            document.getElementById('save-fixed-code-btn').addEventListener('click', async function() {
+                if (selectedFilesForAI.size === 0) {
+                    alert('Please select a file to save fixes to.');
+                    return;
+                }
+                
+                const filename = Array.from(selectedFilesForAI)[0];
+                const fixedContent = document.getElementById('fixed-code').textContent;
+                
+                if (!fixedContent) {
+                    alert('No fixed code available.');
+                    return;
+                }
+                
+                // Extract property ID from verification command
+                const commandUsed = document.getElementById('ai-command-used').textContent;
+                const propertyId = extractPropertyId(commandUsed);
+                
+                try {
+                    const response = await fetch('/apply_fix', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            filename: filename,
+                            fixed_content: fixedContent,
+                            property_id: propertyId
+                        }),
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.status === 'SUCCESS') {
+                        alert(`Fix applied and saved as ${data.new_filename}`);
+                        // Store the fixed filename for later use
+                        document.getElementById('fixed-filename').textContent = data.new_filename;
+                        // Refresh the file list
+                        loadSourceFilesForAI();
+                    } else {
+                        alert(`Error applying fix: ${data.message}`);
+                    }
+                } catch (error) {
+                    console.error('Error saving fixed code:', error);
+                    alert('Error saving fixed code: ' + error.message);
+                }
+            });
+            
+            // Function to display property content
+            async function displayPropertyContent(propertyName) {
+                try {
+                    // Check if we already have the content
+                    if (propertyContents[propertyName]) {
+                        const propertyInfo = propertyContents[propertyName];
+                        document.getElementById('selected-property-name').textContent = `${propertyName} (from ${propertyInfo.file})`;
+                        document.getElementById('property-content').textContent = propertyInfo.content;
+                        document.getElementById('property-content-display').style.display = 'block';
+                        return;
+                    }
+                    
+                    // Otherwise fetch from server
+                    const response = await fetch(`/get_property_content?property_name=${encodeURIComponent(propertyName)}`);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        alert(data.error);
+                        return;
+                    }
+                    
+                    // Store for future use
+                    propertyContents[propertyName] = data;
+                    
+                    // Display the content
+                    document.getElementById('selected-property-name').textContent = `${propertyName} (from ${data.file})`;
+                    document.getElementById('property-content').textContent = data.content;
+                    document.getElementById('property-content-display').style.display = 'block';
+                } catch (error) {
+                    console.error('Error fetching property content:', error);
+                    alert('Error fetching property content: ' + error.message);
+                }
+            }
+            
+            // Close property content display
+            document.getElementById('close-property-content').addEventListener('click', function() {
+                document.getElementById('property-content-display').style.display = 'none';
+            });
+            
+            // Initialize tabs when page loads
+            if (window.location.hash === '#ai-fix') {
+                const aiFixTab = new bootstrap.Tab(document.getElementById('ai-fix-tab'));
+                aiFixTab.show();
+                loadVerificationResults();
+                loadSourceFilesForAI();
+            }
+
+            // Verify fixed code
+            document.getElementById('verify-fixed-code-btn').addEventListener('click', async function() {
+                if (selectedFilesForAI.size === 0) {
+                    alert('Please select a file to verify fixes for.');
+                    return;
+                }
+                
+                const filename = Array.from(selectedFilesForAI)[0];
+                const fixedFilename = document.getElementById('fixed-filename').textContent || '';
+                
+                if (!fixedFilename) {
+                    alert('No fixed file available. Please save the fixed code first.');
+                    return;
+                }
+                
+                // Get the command from the original verification
+                const commandUsed = document.getElementById('ai-command-used').textContent;
+                
+                // Extract only the arguments portion of the command (like --k-induction -DVERIFY_PROPERTY_1)
+                let commandArgs = "";
+                if (commandUsed) {
+                    // Find the position after "esbmc" and file paths
+                    const esbmcPos = commandUsed.indexOf('esbmc');
+                    if (esbmcPos >= 0) {
+                        const afterEsbmc = commandUsed.substring(esbmcPos + 5);
+                        // Find the position after all file paths and -I flag
+                        const flagsPos = afterEsbmc.search(/\s--|\s-D/);
+                        if (flagsPos >= 0) {
+                            // Filter out memlimit and timeout flags as they'll be added separately
+                            const allArgs = afterEsbmc.substring(flagsPos).trim().split(/\s+/);
+                            const filteredArgs = allArgs.filter((arg, index) => {
+                                return arg !== '--memlimit' && 
+                                       arg !== '--timeout' && 
+                                       (index === 0 || (allArgs[index-1] !== '--memlimit' && allArgs[index-1] !== '--timeout'));
+                            });
+                            commandArgs = filteredArgs.join(' ');
+                        }
+                    }
+                }
+                
+                try {
+                    // Show loading indicator
+                    document.getElementById('verify-fixed-code-btn').disabled = true;
+                    document.getElementById('verify-fixed-code-btn').textContent = 'Verifying...';
+                    
+                    const response = await fetch('/verify_fixed_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            filename: filename,
+                            fixed_filename: fixedFilename,
+                            command: commandArgs,
+                            memlimit: "10000",
+                            timeout: "300"
+                        }),
+                    });
+                    
+                    const data = await response.json();
+                    
+                    const statusDiv = document.getElementById('fixed-verification-status');
+                    const outputDiv = document.getElementById('fixed-result-output');
+                    const commandUsedDiv = document.getElementById('fixed-command-used');
+                    const counterexampleDiv = document.getElementById('fixed-counterexample-output');
+                    const counterexampleSection = document.getElementById('fixed-counterexample-section');
+                    const continueFixingSection = document.getElementById('continue-fixing-section');
+                    
+                    if (data.status === 'SUCCESSFUL') {
+                        statusDiv.className = 'alert alert-success';
+                        statusDiv.textContent = 'Verification Successful! The fix worked!';
+                        continueFixingSection.style.display = 'none';
+                    } else if (data.status === 'FAILED') {
+                        statusDiv.className = 'alert alert-danger';
+                        statusDiv.textContent = 'Verification Failed! The fix did not resolve all issues.';
+                        continueFixingSection.style.display = 'block';
+                    } else {
+                        statusDiv.className = 'alert alert-warning';
+                        statusDiv.textContent = `Verification Status: ${data.status}`;
+                        continueFixingSection.style.display = 'none';
+                    }
+                    
+                    commandUsedDiv.textContent = data.command_used || 'Command not available';
+                    outputDiv.textContent = data.output || 'No output available';
+                    
+                    if (data.counterexample) {
+                        counterexampleSection.style.display = 'block';
+                        counterexampleDiv.textContent = data.counterexample;
+                    } else {
+                        counterexampleSection.style.display = 'none';
+                    }
+                    
+                    document.getElementById('fixed-verification-result-section').style.display = 'block';
+                } catch (error) {
+                    console.error('Error verifying fixed code:', error);
+                    alert('Error verifying fixed code: ' + error.message);
+                } finally {
+                    document.getElementById('verify-fixed-code-btn').disabled = false;
+                    document.getElementById('verify-fixed-code-btn').textContent = 'Verify Fixed Code';
+                }
+            });
+
+            // Continue fixing if verification still fails
+            document.getElementById('continue-fixing-btn').addEventListener('click', function() {
+                // Reset the AI response section to allow for a new round of fixes
+                document.getElementById('ai-response').innerHTML = '';
+                document.getElementById('ai-response-section').style.display = 'none';
+                
+                // Update the verification results at the top with the fixed code verification results
+                const fixedStatus = document.getElementById('fixed-verification-status').textContent;
+                const fixedCommand = document.getElementById('fixed-command-used').textContent;
+                const fixedOutput = document.getElementById('fixed-result-output').textContent;
+                const fixedCounterexample = document.getElementById('fixed-counterexample-output').textContent;
+                
+                // Update the verification status
+                document.getElementById('ai-verification-status').textContent = fixedStatus;
+                if (fixedStatus.includes('Successful')) {
+                    document.getElementById('ai-verification-status').className = 'alert alert-success';
+                } else if (fixedStatus.includes('Failed')) {
+                    document.getElementById('ai-verification-status').className = 'alert alert-danger';
+                } else {
+                    document.getElementById('ai-verification-status').className = 'alert alert-warning';
+                }
+                
+                // Update the command used
+                document.getElementById('ai-command-used').textContent = fixedCommand;
+                
+                // Update the counterexample/output
+                if (document.getElementById('fixed-counterexample-section').style.display !== 'none') {
+                    document.getElementById('ai-counterexample-output').textContent = fixedCounterexample;
+                    document.getElementById('ai-counterexample-section').style.display = 'block';
+                } else {
+                    document.getElementById('ai-counterexample-output').textContent = fixedOutput;
+                    document.getElementById('ai-counterexample-section').style.display = 'block';
+                }
+                
+                // Property content should remain the same as it's based on the original property
+                
+                // Scroll to the top of the AI Fix tab
+                document.getElementById('ai-fix-content').scrollIntoView({ behavior: 'smooth' });
+                
+                // Wait a moment before scrolling to the generate fix button
+                setTimeout(() => {
+                    document.getElementById('analyze-fix-btn').scrollIntoView({ behavior: 'smooth' });
+                }, 1000);
+            });
+
+            // Add a hidden input to store the fixed filename
+            const fixedFilenameInput = document.createElement('input');
+            fixedFilenameInput.type = 'hidden';
+            fixedFilenameInput.id = 'fixed-filename';
+            document.body.appendChild(fixedFilenameInput);
+
+            // Load the default prompt template when the page loads
+            loadDefaultPromptTemplate();
+        });
+    </script>
+</body>
+</html>
+    
