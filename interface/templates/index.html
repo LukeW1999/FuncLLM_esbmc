@@ -18,6 +18,7 @@
         .diff-added { background-color: #e6ffed; }
         .diff-removed { background-color: #ffebe9; text-decoration: line-through; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -230,11 +231,16 @@
                                     <div class="spinner-border ms-auto" role="status" aria-hidden="true"></div>
                                 </div>
                             </div>
-                            <div id="ai-response-section" class="mt-4" style="display: none;">
-                                <h5>AI Suggestions (editable):</h5>
-                                <div id="ai-response" class="result-area border p-3 bg-light" contenteditable="true"></div>
-                                <div class="mt-3">
-                                    <button id="apply-fix-btn" class="btn btn-success">Generate Fixed Code</button>
+                            <div id="ai-response-section" class="card mb-4" style="display: none;">
+                                <div class="card-header">AI Fix Suggestions</div>
+                                <div class="card-body">
+                                    <div id="loading-spinner" style="display: none;">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <span class="ms-2">Generating fix suggestions...</span>
+                                    </div>
+                                    <div id="ai-response" class="result-area border p-3 bg-light mt-3"></div>
                                 </div>
                             </div>
                             
@@ -826,36 +832,42 @@
                 const systemSpecification = document.getElementById('system-specification').value;
                 
                 if (!apiKey) {
-                    document.getElementById('error-message').textContent = 'API key is required';
-                    document.getElementById('error-message').style.display = 'block';
+                    alert('API key is required');
                     return;
                 }
                 
                 if (selectedFilesForAI.size === 0) {
-                    document.getElementById('error-message').textContent = 'Please select at least one file for analysis';
-                    document.getElementById('error-message').style.display = 'block';
+                    alert('Please select at least one file for analysis');
                     return;
                 }
                 
-                // Hide error message if it was shown before
-                document.getElementById('error-message').style.display = 'none';
-                
-                // Show loading spinner and status
+                // Show loading spinner
                 document.getElementById('loading-spinner').style.display = 'block';
                 document.getElementById('analyze-fix-btn').disabled = true;
                 
-                // Create a status element to show progress
-                const statusElement = document.createElement('div');
-                statusElement.className = 'alert alert-info';
-                statusElement.textContent = 'Starting analysis...';
-                document.getElementById('loading-spinner').appendChild(statusElement);
-                
                 // Clear previous response
-                document.getElementById('ai-response').innerHTML = '';
+                const aiResponseElement = document.getElementById('ai-response');
+                aiResponseElement.innerHTML = '';
                 document.getElementById('ai-response-section').style.display = 'block';
-                document.getElementById('prompt-used-section').style.display = 'none';
+                
+                // Create a status element to show progress
+                let statusElement = document.getElementById('ai-status-message');
+                if (!statusElement) {
+                    statusElement = document.createElement('div');
+                    statusElement.id = 'ai-status-message';
+                    statusElement.className = 'alert alert-info mt-3';
+                    statusElement.textContent = 'Starting analysis...';
+                    // Add it to the response section
+                    const responseSection = document.getElementById('ai-response-section');
+                    responseSection.appendChild(statusElement);
+                } else {
+                    statusElement.textContent = 'Starting analysis...';
+                    statusElement.style.display = 'block';
+                }
                 
                 try {
+                    console.log('Sending request to /analyze_and_fix');
+                    
                     const response = await fetch('/analyze_and_fix', {
                         method: 'POST',
                         headers: {
@@ -878,69 +890,76 @@
                     // Handle streaming response
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
-                    let currentResponse = '';
+                    let responseBuffer = '';
+                    let rawContent = '';
                     
                     while (true) {
-                        const { value, done } = await reader.read();
-                        if (done) break;
+                        const { done, value } = await reader.read();
                         
-                        const text = decoder.decode(value);
-                        const lines = text.split('\n').filter(line => line.trim());
+                        if (done) {
+                            console.log('Stream complete');
+                            break;
+                        }
                         
-                        for (const line of lines) {
+                        // Decode the chunk
+                        const chunk = decoder.decode(value, { stream: true });
+                        console.log('Received chunk:', chunk);
+                        responseBuffer += chunk;
+                        
+                        // Process complete JSON objects
+                        let newlineIndex;
+                        while ((newlineIndex = responseBuffer.indexOf('\n')) !== -1) {
+                            const line = responseBuffer.substring(0, newlineIndex).trim();
+                            responseBuffer = responseBuffer.substring(newlineIndex + 1);
+                            
+                            if (!line) continue;
+                            
                             try {
+                                console.log('Processing line:', line);
                                 const data = JSON.parse(line);
-                                
-                                if (data.status === 'error') {
-                                    throw new Error(data.message);
-                                }
                                 
                                 // Update status message
                                 if (data.message) {
                                     statusElement.textContent = data.message;
                                 }
                                 
-                                // If we're generating, update the response in real-time
                                 if (data.status === 'generating') {
+                                    // Update the response with new content
                                     if (data.current_response) {
-                                        currentResponse = data.current_response;
-                                        document.getElementById('ai-response').innerHTML = marked.parse(currentResponse);
+                                        rawContent = data.current_response;
                                     } else if (data.token) {
-                                        currentResponse += data.token;
-                                        document.getElementById('ai-response').innerHTML = marked.parse(currentResponse);
+                                        rawContent += data.token;
                                     }
-                                }
-                                
-                                // If we have a complete response, display it
-                                if (data.status === 'completed' && data.response) {
-                                    // Display the AI response
-                                    document.getElementById('ai-response').innerHTML = marked.parse(data.response);
                                     
-                                    // Display the prompt used
-                                    document.getElementById('prompt-used-content').textContent = data.prompt_used;
-                                    document.getElementById('prompt-used-section').style.display = 'block';
-                                    document.getElementById('prompt-used-container').style.display = 'none';
-                                    
-                                    // Update status
-                                    statusElement.className = 'alert alert-success';
-                                    statusElement.textContent = 'Analysis completed!';
+                                    if (rawContent) {
+                                        aiResponseElement.innerHTML = marked.parse(rawContent);
+                                        // Scroll to the bottom of the response
+                                        aiResponseElement.scrollTop = aiResponseElement.scrollHeight;
+                                    }
+                                } else if (data.status === 'completed') {
+                                    // Final response
+                                    console.log('Final response received');
+                                    aiResponseElement.innerHTML = marked.parse(data.response);
+                                    // Hide the status element
+                                    statusElement.style.display = 'none';
+                                } else if (data.status === 'error') {
+                                    throw new Error(data.message);
                                 }
                             } catch (e) {
-                                console.error('Error parsing streaming response:', e, line);
+                                console.error('Error processing response:', e, line);
                             }
                         }
                     }
-                    
                 } catch (error) {
-                    console.error('Error during AI analysis:', error);
-                    document.getElementById('error-message').textContent = 'Error during AI analysis: ' + error.message;
-                    document.getElementById('error-message').style.display = 'block';
-                    
-                    // Update status
-                    statusElement.className = 'alert alert-danger';
-                    statusElement.textContent = 'Error: ' + error.message;
+                    console.error('Error analyzing code:', error);
+                    alert('Error analyzing code: ' + error.message);
+                    // Update status to show error
+                    if (statusElement) {
+                        statusElement.className = 'alert alert-danger mt-3';
+                        statusElement.textContent = 'Error: ' + error.message;
+                    }
                 } finally {
-                    // Hide loading spinner but keep the status
+                    // Hide loading spinner and re-enable button
                     document.getElementById('loading-spinner').style.display = 'none';
                     document.getElementById('analyze-fix-btn').disabled = false;
                 }
@@ -1295,6 +1314,20 @@
 
             // Load the default prompt template when the page loads
             loadDefaultPromptTemplate();
+
+            // Check if there's a stored AI fix response from the redirect
+            const storedAiResponse = localStorage.getItem('aiFixResponse');
+            if (storedAiResponse) {
+                // Display the response
+                document.getElementById('ai-response').innerHTML = storedAiResponse;
+                document.getElementById('ai-response-section').style.display = 'block';
+                
+                // Clear the stored response after using it
+                localStorage.removeItem('aiFixResponse');
+                
+                // Activate the AI fix tab
+                document.querySelector('button[data-bs-target="#ai-fix-tab-pane"]').click();
+            }
         });
     </script>
 </body>

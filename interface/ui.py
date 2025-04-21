@@ -838,24 +838,29 @@ async def analyze_and_fix(request: Request):
     system_specification = data.get("system_specification", "")
     specific_model = data.get("specific_model", "")
 
+    print(f"Received analyze_and_fix request: model={ai_model}, specific_model={specific_model}, files={selected_files}")
+
     if not ai_model or not api_key:
-        return {"error": "AI model and API key are required"}
+        return JSONResponse(content={"error": "AI model and API key are required"}, status_code=400)
 
     if not selected_files:
-        return {"error": "No files selected for analysis"}
+        return JSONResponse(content={"error": "No files selected for analysis"}, status_code=400)
 
     async def generate_response():
         try:
             # Send initial status
+            print("Sending initial status")
             yield json.dumps({"status": "preparing", "message": "Preparing verification results..."}) + "\n"
             
             # Get verification results
             verification_results = await get_last_verification_result()
             
             if "error" in verification_results:
+                print(f"Error in verification results: {verification_results['error']}")
                 yield json.dumps({"status": "error", "message": verification_results["error"]}) + "\n"
                 return
             
+            print("Loading source files")
             yield json.dumps({"status": "loading_files", "message": "Loading source files..."}) + "\n"
             
             # Get source files content
@@ -867,6 +872,7 @@ async def analyze_and_fix(request: Request):
                         content = f.read()
                     source_files_content += f"\nFile: {filename}\n```c\n{content}\n```\n"
             
+            print("Preparing prompt")
             yield json.dumps({"status": "preparing_prompt", "message": "Preparing AI prompt..."}) + "\n"
             
             # Prepare the prompt
@@ -903,11 +909,13 @@ async def analyze_and_fix(request: Request):
                 if system_specification:
                     prompt += f"\n\nAdditional System Specification:\n{system_specification}"
             
+            print(f"Calling {ai_model} API")
             yield json.dumps({"status": "calling_ai", "message": f"Calling {ai_model} API..."}) + "\n"
             
             # Call the appropriate AI model with streaming
             if ai_model == "chatgpt":
                 model_name = specific_model or "gpt-4o"
+                print(f"Using OpenAI model: {model_name}")
                 yield json.dumps({"status": "model_selected", "message": f"Using OpenAI model: {model_name}"}) + "\n"
                 
                 # Stream the response
@@ -927,6 +935,7 @@ async def analyze_and_fix(request: Request):
                 
             elif ai_model == "claude":
                 model_name = specific_model or "claude-3-7-sonnet-20250219"
+                print(f"Using Claude model: {model_name}")
                 yield json.dumps({"status": "model_selected", "message": f"Using Claude model: {model_name}"}) + "\n"
                 
                 # Stream the response
@@ -946,10 +955,12 @@ async def analyze_and_fix(request: Request):
                 
             elif ai_model == "deepseek":
                 model_name = specific_model or "deepseek-chat"
+                print(f"Using DeepSeek model: {model_name}")
                 yield json.dumps({"status": "model_selected", "message": f"Using DeepSeek model: {model_name}"}) + "\n"
                 
                 # Stream the response
                 async for chunk in call_deepseek_api_streaming(prompt, api_key, model_name):
+                    print(f"Received chunk: {chunk['type']}")
                     if chunk["type"] == "token":
                         yield json.dumps({
                             "status": "generating", 
@@ -957,6 +968,7 @@ async def analyze_and_fix(request: Request):
                             "current_response": chunk["full_response"]
                         }) + "\n"
                     elif chunk["type"] == "done":
+                        print(f"Done with response: {len(chunk['full_response'])} chars")
                         yield json.dumps({
                             "status": "completed", 
                             "response": chunk["full_response"], 
@@ -967,12 +979,16 @@ async def analyze_and_fix(request: Request):
                 return
             
         except Exception as e:
+            print(f"Error in generate_response: {str(e)}")
+            import traceback
+            traceback.print_exc()
             yield json.dumps({"status": "error", "message": str(e)}) + "\n"
     
     return StreamingResponse(generate_response(), media_type="application/x-ndjson")
 
 async def call_deepseek_api_streaming(prompt, api_key, model="deepseek-chat"):
     """Call DeepSeek API with streaming response"""
+    print(f"Calling DeepSeek API with model {model}")
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
@@ -991,6 +1007,7 @@ async def call_deepseek_api_streaming(prompt, api_key, model="deepseek-chat"):
         async with session.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload) as response:
             if response.status != 200:
                 error_text = await response.text()
+                print(f"DeepSeek API error: {response.status} - {error_text}")
                 raise Exception(f"DeepSeek API error: {response.status} - {error_text}")
             
             # Initialize response text
@@ -999,20 +1016,31 @@ async def call_deepseek_api_streaming(prompt, api_key, model="deepseek-chat"):
             # Process the streaming response
             async for line in response.content:
                 line = line.decode('utf-8').strip()
+                
+                if not line:
+                    continue
+                    
+                print(f"DeepSeek raw line: {line}")
+                
                 if line.startswith("data: ") and not line.startswith("data: [DONE]"):
                     try:
-                        data = json.loads(line[6:])  # Remove "data: " prefix
-                        if "choices" in data and len(data["choices"]) > 0:
-                            delta = data["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                content = delta["content"]
-                                response_text += content
-                                yield {"type": "token", "content": content, "full_response": response_text}
-                    except json.JSONDecodeError:
-                        pass
+                        data_str = line[6:]  # Remove "data: " prefix
+                        if data_str:
+                            data = json.loads(data_str)
+                            if "choices" in data and len(data["choices"]) > 0:
+                                delta = data["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    content = delta["content"]
+                                    response_text += content
+                                    print(f"DeepSeek token: {content}")
+                                    yield {"type": "token", "content": content, "full_response": response_text}
+                    except json.JSONDecodeError as e:
+                        print(f"JSON decode error: {e} for line: {line}")
                 elif line.startswith("data: [DONE]"):
+                    print("DeepSeek stream complete")
                     break
             
+            print(f"DeepSeek final response length: {len(response_text)}")
             yield {"type": "done", "full_response": response_text}
 
 if __name__ == "__main__":
