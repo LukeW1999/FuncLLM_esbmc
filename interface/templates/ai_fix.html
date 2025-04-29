@@ -3,18 +3,23 @@
 <head>
     <title>AI Fix Suggestions - Formal Verification Assistant</title>
     <script>
-        // Instead of immediately redirecting, we'll check for and store any response data first
         document.addEventListener('DOMContentLoaded', function() {
             // Get the AI response from the URL if it exists
             const urlParams = new URLSearchParams(window.location.search);
             const aiResponse = urlParams.get('response');
             
             if (aiResponse) {
-                // Store the response in localStorage for the main page to access
-                localStorage.setItem('aiFixResponse', decodeURIComponent(aiResponse));
+                try {
+                    // Store the decoded response in localStorage for the main page to access
+                    const decodedResponse = decodeURIComponent(aiResponse);
+                    localStorage.setItem('aiFixResponse', decodedResponse);
+                    console.log("Stored AI fix response in localStorage");
+                } catch (error) {
+                    console.error("Error storing AI fix response:", error);
+                }
             }
             
-            // Then redirect to the main page with the AI fix tab selected
+            // Redirect to the main page with the AI fix tab selected
             window.location.href = "/#ai-fix";
         });
     </script>

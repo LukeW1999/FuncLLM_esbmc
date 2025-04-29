@@ -441,12 +441,40 @@ async def get_last_verification_result():
         "property_name": property_name
     }
 
+@app.post("/compare_code")
+async def compare_code(request: Request):
+    """Compare two pieces of code and return the differences"""
+    data = await request.json()
+    original_code = data.get("original_code", "")
+    fixed_code = data.get("fixed_code", "")
+    
+    if not original_code or not fixed_code:
+        return {"error": "Both original_code and fixed_code are required."}
+    
+    # Use difflib to generate differences
+    diff = difflib.unified_diff(original_code.splitlines(), fixed_code.splitlines(), lineterm='', fromfile='original', tofile='fixed')
+
+    # Format the diff with HTML for better display
+    diff_html = ""
+    for line in diff:
+        if line.startswith('+'):
+            diff_html += f'<div class="diff-line diff-added">{line}</div>'
+        elif line.startswith('-'):
+            diff_html += f'<div class="diff-line diff-removed">{line}</div>'
+        elif line.startswith('@@'):
+            diff_html += f'<div class="diff-line diff-info">{line}</div>'
+        else:
+            diff_html += f'<div class="diff-line">{line}</div>'
+
+    return {"diff": "\n".join(diff), "diff_html": diff_html}
+
 @app.post("/apply_fix")
-async def apply_fix(request: Dict[str, Any]):
+async def apply_fix(request: Request):
     """Apply AI suggested fixes to source files"""
-    filename = request.get("filename", "")
-    fixed_content = request.get("fixed_content", "")
-    property_id = request.get("property_id", "")
+    data = await request.json()
+    filename = data.get("filename", "")
+    fixed_content = data.get("fixed_content", "")
+    property_id = data.get("property_id", "")
     
     if not filename or not fixed_content:
         return {"status": "ERROR", "message": "Filename and fixed content are required"}
@@ -469,166 +497,17 @@ async def apply_fix(request: Dict[str, Any]):
     except Exception as e:
         return {"status": "ERROR", "message": str(e)}
 
-async def call_chatgpt_api_streaming(prompt, api_key, model="gpt-4o"):
-    """Call OpenAI API with streaming response"""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a formal verification expert who can analyze code and suggest fixes."},
-            {"role": "user", "content": prompt}
-        ],
-        "stream": True
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise Exception(f"OpenAI API error: {response.status} - {error_text}")
-            
-            # Initialize response text
-            response_text = ""
-            
-            # Process the streaming response
-            async for line in response.content:
-                line = line.decode('utf-8').strip()
-                if line.startswith("data: ") and not line.startswith("data: [DONE]"):
-                    try:
-                        data = json.loads(line[6:])  # Remove "data: " prefix
-                        if "choices" in data and len(data["choices"]) > 0:
-                            delta = data["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                content = delta["content"]
-                                response_text += content
-                                yield {"type": "token", "content": content, "full_response": response_text}
-                    except json.JSONDecodeError:
-                        pass
-                elif line.startswith("data: [DONE]"):
-                    break
-            
-            yield {"type": "done", "full_response": response_text}
-
-async def call_claude_api_streaming(prompt, api_key, model="claude-3-7-sonnet-20250219"):
-    """Call Anthropic Claude API with streaming response"""
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01"
-    }
-    
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "stream": True
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise Exception(f"Claude API error: {response.status} - {error_text}")
-            
-            # Initialize response text
-            response_text = ""
-            
-            # Process the streaming response
-            async for line in response.content:
-                line = line.decode('utf-8').strip()
-                if line and line.startswith("data: ") and not line.startswith("data: [DONE]"):
-                    try:
-                        data = json.loads(line[6:])  # Remove "data: " prefix
-                        if "type" in data and data["type"] == "content_block_delta":
-                            if "delta" in data and "text" in data["delta"]:
-                                content = data["delta"]["text"]
-                                response_text += content
-                                yield {"type": "token", "content": content, "full_response": response_text}
-                    except json.JSONDecodeError:
-                        pass
-                elif line.startswith("data: [DONE]"):
-                    break
-            
-            yield {"type": "done", "full_response": response_text}
-
-def call_chatgpt_api(prompt, api_key, model="gpt-4o"):
-    """Call the OpenAI API with the given prompt"""
-    try:
-        from openai import OpenAI
-        
-        client = OpenAI(api_key=api_key)
-        
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=4000
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error calling OpenAI API: {str(e)}"
-
-def call_claude_api(prompt, api_key, model="claude-3-7-sonnet-20250219"):
-    """Call the Anthropic Claude API with the given prompt"""
-    try:
-        import anthropic
-        
-        client = anthropic.Anthropic(api_key=api_key)
-        
-        response = client.messages.create(
-            model=model,
-            max_tokens=4000,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
-        )
-        
-        return response.content[0].text
-    except Exception as e:
-        return f"Error calling Claude API: {str(e)}"
-
-def call_deepseek_api(prompt, api_key, model="deepseek-chat"):
-    """Call the DeepSeek API with the given prompt"""
-    try:
-        from openai import OpenAI
-        
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        
-        messages = [{"role": "user", "content": prompt}]
-        
-        response = client.chat.completions.create(
-            model=model,  # Allow specifying different DeepSeek models
-            messages=messages
-        )
-        
-        # Handle both standard and reasoner models
-        if hasattr(response.choices[0].message, 'reasoning_content') and response.choices[0].message.reasoning_content:
-            # This is a reasoner model, include the reasoning in the response
-            return f"Reasoning:\n{response.choices[0].message.reasoning_content}\n\nResponse:\n{response.choices[0].message.content}"
-        else:
-            # Standard model
-            return response.choices[0].message.content
-    except Exception as e:
-        return f"Error calling DeepSeek API: {str(e)}"
-
 @app.post("/generate_fixed_code")
-async def generate_fixed_code(request: Dict[str, Any]):
+async def generate_fixed_code(request: Request):
     """Generate fixed code based on AI suggestions and user edits"""
-    filename = request.get("filename", "")
-    original_content = request.get("original_content", "")
-    ai_suggestions = request.get("ai_suggestions", "")
-    user_edits = request.get("user_edits", "")
-    system_specification = request.get("system_specification", "")  # 获取系统规范
-    ai_model = request.get("ai_model", "")
-    api_key = request.get("api_key", "")
+    data = await request.json()
+    filename = data.get("filename", "")
+    original_content = data.get("original_content", "")
+    ai_suggestions = data.get("ai_suggestions", "")
+    user_edits = data.get("user_edits", "")
+    system_specification = data.get("system_specification", "")
+    ai_model = data.get("ai_model", "")
+    api_key = data.get("api_key", "")
     
     if not filename or not original_content:
         return {"error": "Filename and original content are required"}
@@ -642,7 +521,7 @@ async def generate_fixed_code(request: Dict[str, Any]):
 1. The original code
 2. AI suggestions for fixing the code
 3. User edits to those suggestions
-4. System specification: {system_specification}  # Include system specification
+4. System specification: {system_specification}
 
 Please generate a complete, fixed version of the file that incorporates all the necessary changes.
 
@@ -682,6 +561,8 @@ Please provide ONLY the complete fixed code without any explanations or markdown
         
         return {"fixed_code": fixed_code}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 @app.post("/verify_fixed_code")
@@ -797,33 +678,6 @@ async def verify_fixed_code(request: Dict[str, Any]):
         }
         last_verification_result = error_result
         return error_result
-
-@app.post("/compare_code")
-async def compare_code(request: Request):
-    """Compare two pieces of code and return the differences"""
-    data = await request.json()  # 获取 JSON 数据
-    original_code = data.get("original_code", "")
-    fixed_code = data.get("fixed_code", "")
-    
-    if not original_code or not fixed_code:
-        return {"error": "Both original_code and fixed_code are required."}
-    
-    # 使用 difflib 生成差异
-    diff = difflib.unified_diff(original_code.splitlines(), fixed_code.splitlines(), lineterm='', fromfile='original', tofile='fixed')
-
-    # Format the diff with HTML for better display
-    diff_html = ""
-    for line in diff:
-        if line.startswith('+'):
-            diff_html += f'<div class="diff-line diff-added">{line}</div>'
-        elif line.startswith('-'):
-            diff_html += f'<div class="diff-line diff-removed">{line}</div>'
-        elif line.startswith('@@'):
-            diff_html += f'<div class="diff-line diff-info">{line}</div>'
-        else:
-            diff_html += f'<div class="diff-line">{line}</div>'
-
-    return {"diff": "\n".join(diff), "diff_html": diff_html}
 
 @app.post("/analyze_and_fix")
 async def analyze_and_fix(request: Request):
@@ -1042,6 +896,76 @@ async def call_deepseek_api_streaming(prompt, api_key, model="deepseek-chat"):
             
             print(f"DeepSeek final response length: {len(response_text)}")
             yield {"type": "done", "full_response": response_text}
+
+def call_chatgpt_api(prompt, api_key, model="gpt-4o"):
+    """Call OpenAI API without streaming"""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a formal verification expert who can analyze code and suggest fixes."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    
+    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+    
+    if response.status_code != 200:
+        raise Exception(f"OpenAI API error: {response.status_code} - {response.text}")
+    
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
+
+def call_claude_api(prompt, api_key, model="claude-3-7-sonnet-20250219"):
+    """Call Anthropic Claude API without streaming"""
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 4000
+    }
+    
+    response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
+    
+    if response.status_code != 200:
+        raise Exception(f"Claude API error: {response.status_code} - {response.text}")
+    
+    data = response.json()
+    return data["content"][0]["text"]
+
+def call_deepseek_api(prompt, api_key, model="deepseek-chat"):
+    """Call DeepSeek API without streaming"""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a formal verification expert who can analyze code and suggest fixes."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    
+    response = requests.post("https://api.deepseek.com/v1/chat/completions", headers=headers, json=payload)
+    
+    if response.status_code != 200:
+        raise Exception(f"DeepSeek API error: {response.status_code} - {response.text}")
+    
+    data = response.json()
+    return data["choices"][0]["message"]["content"]
 
 if __name__ == "__main__":
     import uvicorn

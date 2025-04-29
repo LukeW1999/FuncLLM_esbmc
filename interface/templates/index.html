@@ -965,6 +965,13 @@
                 }
             });
             
+            // Add an Apply Fix button after the AI response
+            const applyFixBtn = document.createElement('button');
+            applyFixBtn.id = 'apply-fix-btn';
+            applyFixBtn.className = 'btn btn-primary mt-3';
+            applyFixBtn.textContent = 'Apply Fix';
+            document.getElementById('ai-response-section').querySelector('.card-body').appendChild(applyFixBtn);
+
             // Apply selected fixes - updated to generate fixed code
             document.getElementById('apply-fix-btn').addEventListener('click', async function() {
                 // Get the selected file (first file in the selectedFilesForAI set)
@@ -976,7 +983,7 @@
                 const filename = Array.from(selectedFilesForAI)[0];
                 const aiSuggestions = document.getElementById('ai-response').innerHTML;
                 const userEdits = document.getElementById('ai-response').textContent;
-                const systemSpecification = document.getElementById('system-specification').value; // 获取系统规范
+                const systemSpecification = document.getElementById('system-specification').value;
                 const aiModel = document.getElementById('ai-model').value;
                 const apiKey = document.getElementById('api-key').value;
                 
@@ -1011,7 +1018,7 @@
                             original_content: originalContent,
                             ai_suggestions: aiSuggestions,
                             user_edits: userEdits,
-                            system_specification: systemSpecification, // 传递系统规范
+                            system_specification: systemSpecification,
                             ai_model: aiModel,
                             api_key: apiKey
                         }),
@@ -1318,6 +1325,8 @@
             // Check if there's a stored AI fix response from the redirect
             const storedAiResponse = localStorage.getItem('aiFixResponse');
             if (storedAiResponse) {
+                console.log("Found stored AI fix response");
+                
                 // Display the response
                 document.getElementById('ai-response').innerHTML = storedAiResponse;
                 document.getElementById('ai-response-section').style.display = 'block';
